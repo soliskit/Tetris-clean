@@ -1,0 +1,74 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '20 7 * * 6'
+      timezone: 'America/Los_Angeles'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch replaces a run still in progress.
+# Scheduled and manual runs use a separate group so they never cancel
+# or replace push or pull request runs, queued or running
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '-weekly' || '' }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Lint the Swift sources
+        run: swift format lint --strict --recursive Tetris TetrisTests
+      - name: Build and run the unit tests
+        run: |
+          set -euo pipefail
+          echo '== Available simulator devices =='
+          xcrun simctl list devices available
+          echo '== Available simulator runtimes =='
+          xcrun simctl list runtimes
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          devices = json.load(sys.stdin).get('devices', {})
+          def ios_version(key):
+              tail = key.rsplit('.SimRuntime.iOS-', 1)[-1]
+              parts = tail.split('-')
+              return [int(p) for p in parts if p.isdigit()] if all(p.isdigit() for p in parts) else None
+          ios = {}
+          for key, devs in devices.items():
+              v = ios_version(key)
+              if v is not None:
+                  ios[key] = (v, devs)
+          for key in sorted(ios, key=lambda k: ios[k][0], reverse=True):
+              for d in ios[key][1]:
+                  if d.get('isAvailable', True) and 'iPhone' in d.get('name', ''):
+                      print(d['udid'])
+                      sys.exit(0)
+          ")
+          if [ -z "$UDID" ]; then
+            echo 'No available iPhone simulator; creating one from the latest available iOS runtime.'
+            read -r RUNTIME DEVTYPE < <(xcrun simctl list runtimes -j | python3 -c "
+          import json, sys
+          rts = [r for r in json.load(sys.stdin).get('runtimes', []) if r.get('platform') == 'iOS' and r.get('isAvailable', True)]
+          if not rts:
+              sys.exit('no available iOS simulator runtime on this runner')
+          latest = sorted(rts, key=lambda r: [int(x) for x in r['version'].split('.')], reverse=True)[0]
+          dts = [d for d in latest.get('supportedDeviceTypes', []) if 'iPhone' in d.get('name', '')]
+          if not dts:
+              sys.exit('runtime %s supports no iPhone device type' % latest['identifier'])
+          named = [d for d in dts if d['name'] == 'iPhone 17'] or dts
+          print(latest['identifier'], named[0]['identifier'])
+          ")
+            UDID=$(xcrun simctl create ci-iphone "$DEVTYPE" "$RUNTIME")
+            echo "Created simulator $UDID"
+          fi
+          xcodebuild test -project Tetris.xcodeproj -scheme Tetris -destination "id=$UDID" -derivedDataPath .build
