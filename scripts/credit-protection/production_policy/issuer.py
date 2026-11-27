@@ -13,8 +13,6 @@ class Refusal(Exception):
 
 
 class LocalGitSource:
-    pass
-
     def __init__(self, repo_dir, deadline=None):
         self.repo_dir = repo_dir
         self.deadline = deadline
@@ -49,8 +47,6 @@ class LocalGitSource:
 
 
 class RestSource:
-    pass
-
     def __init__(self, owner, repo, token=None, client=None):
         self.base = f"https://api.github.com/repos/{owner}/{repo}/git/commits"
         self.token = token
@@ -66,7 +62,6 @@ class RestSource:
 
 
 def parse_commit(raw):
-    pass
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -99,9 +94,10 @@ def parse_commit(raw):
     if policy.MAX_PARENTS is not None and len(parents) > policy.MAX_PARENTS:
         raise Refusal("parent count exceeds policy bound")
     for k, v in entries:
-        if k in ("tree", "parent"):
-            if len(v.split()) != 1 or not policy.OID_RE.match(v):
-                raise Refusal(f"{k} value is not exactly one 40-hex id")
+        if k in ("tree", "parent") and (
+            len(v.split()) != 1 or not policy.OID_RE.match(v)
+        ):
+            raise Refusal(f"{k} value is not exactly one 40-hex id")
     ident = {}
     for k, v in entries:
         if k in ("author", "committer"):
@@ -118,7 +114,6 @@ def parse_commit(raw):
 
 
 def admit(source, head_sha):
-    pass
 
     order, stack, seen = [], [head_sha], set()
     while stack:
@@ -150,7 +145,7 @@ def admit(source, head_sha):
                     f"{policy.REQUIRED_IDENT!r}"
                 )
         try:
-            policy.check_message(c["message"])
+            policy.check_message(c["message"], sha)
         except ValueError as e:
             raise Refusal(f"{sha[:12]}: {e}") from None
         order.append(sha)
@@ -159,7 +154,6 @@ def admit(source, head_sha):
 
 
 def require_predecessor(ancestry, approved_old):
-    pass
 
     if approved_old != "0" * 40 and approved_old not in set(ancestry):
         raise Refusal("candidate does not contain the approved predecessor")
@@ -204,7 +198,6 @@ class AdmissionReceipt:
         }
 
     def revalidate(self):
-        pass
 
         if self.epoch != policy.EPOCH:
             raise Refusal(
@@ -223,12 +216,13 @@ class AdmissionReceipt:
 
 
 def issue(source, head_sha, repo_id, approved_old, epoch=policy.EPOCH):
-    pass
 
     if epoch != policy.EPOCH:
         raise Refusal(
             f"approval epoch {epoch} is not the current policy epoch {policy.EPOCH}"
         )
+    if repo_id != policy.TARGET_REPOSITORY_ID:
+        raise Refusal("repository does not match reviewed format boundary")
     ancestry = admit(source, head_sha)
     require_predecessor(ancestry, approved_old)
     return AdmissionReceipt(
@@ -249,7 +243,6 @@ def _b64u(b):
 
 
 def _run_bounded(cmd, data, timeout):
-    pass
 
     import os
     import signal
@@ -276,7 +269,6 @@ def _run_bounded(cmd, data, timeout):
 
 
 def publish_check(client, token, owner, repo, receipt, app_id=None):
-    pass
 
     if not isinstance(receipt, AdmissionReceipt):
         raise TypeError("publish_check requires a sealed AdmissionReceipt")
